@@ -368,3 +368,22 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
 - **备份**：`glm2api/src/glm2api/services/glm_client.py.bak-20260825-vision`。
 - **遗留**：PDF 输入未验证（file part 格式仍为旧 source_id 结构，如有需求另行实验）；
   多张图片已支持（每张一个 part，文本只并入第一张）。
+## 13. 长任务"提前下班"问题：模型行为 + 对策（2026-08-25）
+
+- **现象**：OpenCode 里让 GLM-5.3 做较大多步任务（如给马里奥游戏加功能），它完成
+  一个子步骤后输出纯文本状态（日志实锤："还没完成，游戏逻辑代码还在编写中。
+  完成后再测试。"）并以 `finish_reason: stop`、无 tool_calls 结束该轮。
+- **定性**：不是断流/报错/配额——OpenCode 的回合语义是"模型某轮回复不含工具调用
+  = 任务结束，等用户下一条消息"，于是整个会话停了。网页版 GLM-5.3 的 agent
+  循环纪律弱于专用 coding 模型，会在中途用"汇报"代替"继续调用工具"。
+- **代理侧无法根治**：一个 OpenAI chat.completions 请求 = 一个模型响应，响应一结束
+  客户端就收回合，代理无法替客户端"再发一条请继续"。
+- **对策（已实施）**：
+  1. 全局行为规则 `~/.config/opencode/instructions/keep-going.md`（仓库副本
+     `opencode-keep-going.md`）：严禁任务未完成时用纯文本收场，工具返回后立即
+     继续下一步，全部完成并验证后才允许总结结束。
+  2. `~/.config/opencode/opencode.jsonc` 加 `"instructions": [...]` 挂接该文件
+     （键名已对照 opencode.ai/docs/config 确认）。备份
+     `opencode.jsonc.bak-20260825-keepgoing`。改完需完全重启 OpenCode。
+- **使用建议**：超长任务仍建议拆成几段发；提示词里明确"做完全部 N 项后一次性
+  汇报"能显著降低提前收场概率。

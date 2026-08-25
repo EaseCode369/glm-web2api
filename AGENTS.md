@@ -12,6 +12,9 @@
 - 下游已接入：Codex（`~/.codex/config.toml` 的 `[model_providers.glmweb]`，cc-switch 切换）、
   OpenCode（`~/.config/opencode/opencode.jsonc` 的 `glmweb` provider；模型条目已声明
   `modalities` image 输入，图片可用（2026-08-25 用户重测通过），见 PROJECT.md §12）
+- OpenCode 全局行为规则：`~/.config/opencode/instructions/keep-going.md`（仓库副本
+  `opencode-keep-going.md`，经 opencode.jsonc `instructions` 挂载），治 GLM 长任务
+  "提前下班"，见 PROJECT.md §13
 - 2026-08-25 已加固 `glm2api/src/glm2api/utils/tool_parser.py`（CDATA 数组 / 双重编码 JSON /
   幻觉闭合标签三类恢复；原版备份 `tool_parser.py.bak-20260825`），OpenCode `question` 工具
   往返已打通，详见 PROJECT.md §6
