@@ -1,0 +1,24 @@
+# ===== 敏感文件（永不入库）=====
+# 真实账号凭据
+token.txt
+.env
+# 含完整对话原始数据 / 用户真实会话抓取
+log/
+*.log
+glm2api/回复.md
+# 本地备份区（上游 git 备份 + 本地修改 patch）
+.local/
+
+# ===== Python / 运行产物 =====
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+build/
+dist/
+
+# ===== 本地备份文件 =====
+*.bak-*
+
+# ===== 系统 =====
+.DS_Store
