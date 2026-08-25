@@ -100,3 +100,23 @@
   重试次数默认 1，保守防死循环与配额空耗。
 - **备选与否决**：客户端侧重试被否（要改多个客户端，代理是唯一汇聚点）；"断线一律
   整体重发"被否（已流式发出的 token 收不回来，整体重发会产生重复内容）。
+## D13 图片理解（vision）：上游 part 格式必须"图文同 part"，字段用 image_id（2026-08-25）
+
+- **决定**：代理收到 OpenAI `image_url` part → base64/http 下载 → 走 `file_upload` 接口
+  拿到 `file_id` + 带签名的 `file_url` → 拼成上游 part：
+  `{"type":"image","image":[{"image_id":<file_id>,"image_url":<file_url>}],"text":<prompt>}`
+  （`glm_client.py` 的 `_upload_file_reference` + 新增 `_merge_uploaded_refs`）。
+- **实测矩阵**（同一张 3 铅笔测试图，GLM-5.3 非 think 版）：
+  - `{"type":"image_url","image_url":{"url":file_url}}` → 模型答"看不到图片" ✗
+  - `{"type":"file","file":[{"source_id":file_id,...}]}` → 模型"读"出 PNG 字节流 ✗
+  - `{"type":"image","image":[{"image_id":file_id,"image_url":file_url}],"text":...}`（图文**同 part**）→ 正确描述图片 ✓（复验 2 次稳定）
+  - 图文分成两个 part（text part + image part）→ 模型复读 file_id 数字 ✗
+  - `image_url` 字段填 `file_id` 字符串 → 回复为空 ✗
+- **理由**：格式来源是 chatglm.cn 前端 main.js 的 SSE 解析代码
+  （`"image"===A.type ? s.image_url=A.image[0]?.image_url||A.image[0]?.file_url`），
+  再经 8 组对照实验确认。上游 glm2api 原代码读 `result.get("source_id")`，而真实接口
+  返回字段叫 `file_id`，导致上传成功后引用被静默丢弃——上游该 bug 至今未修，本项目已修。
+- **客户端侧**：OpenCode 对自定义 provider 模型默认不声明 image 输入，会把图片替换成
+  文字"ERROR: ... this model does not support image input"。解法是在
+  `~/.config/opencode/opencode.jsonc` 的模型条目加
+  `"capabilities": {"attachment": true, "input": {"text": true, "image": true}}`。

@@ -150,3 +150,108 @@ def test_should_auto_continue_ignores_clean_answer():
         )
         is False
     )
+
+
+# ---------- vision 上传引用合并 ----------
+
+def test_merge_uploaded_refs_single_image():
+    messages = [{"role": "user", "content": [{"type": "text", "text": "User: 图里有几支铅笔？"}]}]
+    refs = [
+        {
+            "type": "image",
+            "image": [{"image_id": "fid123", "image_url": "https://t1.chatglm.cn/file/fid123.png"}],
+        }
+    ]
+    GLMWebClient._merge_uploaded_refs(messages, refs)
+    content = messages[0]["content"]
+    assert content[0]["type"] == "image"
+    assert content[0]["image"] == refs[0]["image"]
+    assert content[0]["text"] == "User: 图里有几支铅笔？"
+
+
+def test_merge_uploaded_refs_multi_image_text_last():
+    messages = [{"role": "user", "content": [{"type": "text", "text": "prompt"}]}]
+    refs = [
+        {"type": "image", "image": [{"image_id": "a", "image_url": "u1"}]},
+        {"type": "image", "image": [{"image_id": "b", "image_url": "u2"}]},
+    ]
+    GLMWebClient._merge_uploaded_refs(messages, refs)
+    content = messages[0]["content"]
+    assert [p["type"] for p in content] == ["image", "image"]
+    assert content[0]["text"] == "prompt" and content[1].get("text") is None
+
+
+def test_merge_uploaded_refs_string_content():
+    messages = [{"role": "user", "content": "hello"}]
+    refs = [{"type": "image", "image": [{"image_id": "a", "image_url": "u"}]}]
+    GLMWebClient._merge_uploaded_refs(messages, refs)
+    content = messages[0]["content"]
+    assert content[0]["type"] == "image"
+    assert content[0]["text"] == "hello"
+
+
+def test_merge_uploaded_refs_no_refs_keeps_message():
+    messages = [{"role": "user", "content": [{"type": "text", "text": "x"}]}]
+    out = GLMWebClient._merge_uploaded_refs(messages, [])
+    assert out is messages or out[0]["content"][0]["text"] == "x"
+
+
+def test_upload_file_reference_uses_file_id(monkeypatch):
+    import json as _json
+    import urllib.request as _ur
+
+    client = _fake_client()
+    client.config = type(
+        "Cfg",
+        (),
+        {
+            "glm_base_url": "https://chatglm.cn",
+            "request_timeout": 10,
+            "debug_dump_all": False,
+        },
+    )()
+    client.auth = type(
+        "Auth",
+        (),
+        {
+            "get_browser_headers": staticmethod(lambda app_fr="default": {"Content-Type": "application/json"}),
+            "read_json_response": staticmethod(lambda resp: {
+                "result": {
+                    "file_id": "fid999",
+                    "file_url": "https://t1.chatglm.cn/file/fid999.png",
+                }
+            }),
+        },
+    )()
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        return _FakeResp()
+
+    class _FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(_ur, "urlopen", fake_urlopen)
+    monkeypatch.setattr(client, "_call_with_account_failover", lambda tag, fn, **kw: _FakeFailoverCtx(lambda: _FakeResp()))
+
+    class _FakeFailoverCtx:
+        def __init__(self, fn):
+            self._fn = fn
+
+        def __enter__(self):
+            return self._fn()
+
+        def __exit__(self, *a):
+            return False
+
+    ref = client._upload_file_reference("data:image/png;base64,aGVsbG8=", is_image=True)
+    assert ref is not None
+    assert ref["type"] == "image"
+    assert ref["image"][0]["image_id"] == "fid999"
+    assert ref["image"][0]["image_url"] == "https://t1.chatglm.cn/file/fid999.png"

@@ -122,3 +122,16 @@
 3. 怀疑路由/形态问题时，统计日志里的 `"model":"moe_` 字段分布。
 4. 对照实验优先于理论推断（L1）。
 5. 服务改动必须 `./stop.sh && ./start.sh`（8100 端口；8000 是用户的 Personal OS，严禁动）。
+## L11 图片"看不到"排查：先分清是客户端拒收还是代理丢引用（2026-08-25）
+
+- **现象**：OpenCode 里发图片，模型回答"我无法查看图片内容"。
+- **排查链**：① 代理日志里 OpenCode 的请求根本没有 image part——消息里是文字
+  `ERROR: Cannot read ... (this model does not support image input)` → 客户端按模型档案
+  （无 image 输入声明）拒收了图。② 补上 capabilities 后直接 curl 代理复测，日志显示
+  上传成功（file_id/file_url 都有）但发给 GLM 的正文里图片只是 `[image:data:...]` 占位文本
+  → 代理 `_upload_file_reference` 读错字段（`source_id` vs 真实返回的 `file_id`），
+  引用静默丢弃。③ 修字段后模型仍说看不到 → 上游 part 格式不对，实验矩阵找到正确格式
+  （图文同 part + image_id，见 DECISIONS.md D13）。
+- **教训**：一条"看图"链路有三个独立闸门（客户端能力声明 / 代理上传引用 / 上游 part
+  格式），必须逐层用日志定界，修完一层重测下一层；`DEBUG_DUMP_ALL=true` 下对比
+  "OpenAI 原始 payload"和"转发到 GLM 的 chat 原始请求体"两段日志是最快的定界手段。

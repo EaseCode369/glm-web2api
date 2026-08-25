@@ -344,3 +344,26 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
 
 **测试**：76 → **81 passed**（新增 5 个：整体重发 / 半路续话 / 重试耗尽 / intervene
 正常收尾 / accumulator.reset）。
+## 12. 第四轮：图片理解（vision）链路打通（2026-08-25）
+
+- **背景**：用户在 OpenCode 发截图问"有几只铅笔"，模型答"无法查看图片"。网页版
+  GLM-5.3 本身支持图片理解，预期代理也应支持。
+- **三层修复**（详见 LESSONS.md L11 / DECISIONS.md D13）：
+  1. **OpenCode 配置**（`~/.config/opencode/opencode.jsonc`）：三个模型条目加
+     `"capabilities": {"attachment": true, "input": {"text": true, "image": true}}`
+     （键名从 opencode 二进制里的模型 schema 确认）。旧配置备份
+     `opencode.jsonc.bak-20260825-vision`。
+  2. **代理字段 bug**：`glm_client.py` `_upload_file_reference` 原来读
+     `result.get("source_id")`，file_upload 接口真实返回字段是 `file_id`，上传成功后
+     图片引用被静默丢弃。现改为 `result.get("file_id") or result.get("source_id")`。
+     上游 XxxXTeam/glm2api 该 bug 未修。
+  3. **上游 part 格式**：8 组对照实验（同一张 3 铅笔图）确认上游 stream 接口只认
+     `{"type":"image","image":[{"image_id":file_id,"image_url":signed_file_url}],"text":prompt}`
+     ——**text 必须与 image 同一 part**。新增 `_merge_uploaded_refs` 把 prompt 文本并入
+     首个 image part、丢弃重复 text part。
+- **验证**：`uv run --with pytest python -m pytest tests/ -q` → **86 passed**
+  （新增 5 个 vision 测试）；端到端 curl（base64 data URL → 代理 → 上游）模型正确
+  描述"三支并排铅笔、黑色笔杆橙色笔尖"。
+- **备份**：`glm2api/src/glm2api/services/glm_client.py.bak-20260825-vision`。
+- **遗留**：PDF 输入未验证（file part 格式仍为旧 source_id 结构，如有需求另行实验）；
+  多张图片已支持（每张一个 part，文本只并入第一张）。

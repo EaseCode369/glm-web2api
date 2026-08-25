@@ -565,6 +565,44 @@ class GLMWebClient:
                 exc,
             )
 
+    @staticmethod
+    def _merge_uploaded_refs(
+        messages: list[dict[str, object]], refs: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        """把上传成功的图片引用合并进首条消息的 content 列表。
+
+        上游 stream 接口要求图片 part 内自带 text（text 与 image 同 part），
+        因此把原 prompt 文本移到图片 part 里，其余 part 原样保留在图片之后。
+        """
+        if not messages:
+            return messages
+        first = messages[0]
+        content = first.get("content")
+        parts: list[dict[str, object]] = (
+            [dict(part) for part in content if isinstance(part, dict)]
+            if isinstance(content, list)
+            else [{"type": "text", "text": str(content or "")}]
+        )
+        leading_images = [part for part in parts if part.get("type") == "image"]
+        trailing = [part for part in parts if part.get("type") != "image"]
+        prompt_text = "\n\n".join(
+            str(part.get("text", "")) for part in trailing if part.get("type") == "text"
+        ).strip()
+        merged: list[dict[str, object]] = []
+        for index, ref in enumerate(refs):
+            image = dict(ref)
+            if index == 0 and "text" not in image:
+                image["text"] = prompt_text
+            merged.append(image)
+        # prompt 文本已并入第一张图的 part，剩余 part 去掉原始文本避免重复
+        if prompt_text:
+            trailing = [part for part in trailing if not (part.get("type") == "text" and str(part.get("text", "")).strip())]
+        merged.extend(trailing)
+        if not merged:
+            merged = leading_images
+        first["content"] = merged
+        return messages
+
     def _open_chat_stream(self, openai_payload: dict[str, object], preferred_account_index: int | None = None):
         requested_model = str(openai_payload.get("model", "glm-4"))
         upstream_model, assistant_id = resolve_upstream_model(requested_model, self.config)
@@ -580,7 +618,7 @@ class GLMWebClient:
         debug_dump(self.logger, self.config.debug_dump_all, "转换后的 GLM messages", converted_messages)
         refs = self._upload_referenced_files(list(openai_payload.get("messages", []))) # type: ignore
         if refs:
-            converted_messages[0]["content"] = refs + list(converted_messages[0]["content"]) # type: ignore
+            converted_messages = self._merge_uploaded_refs(converted_messages, refs)
             debug_dump(self.logger, self.config.debug_dump_all, "附加上传引用后的 GLM messages", converted_messages)
 
         chat_mode = resolve_chat_mode(
@@ -1160,12 +1198,17 @@ class GLMWebClient:
             with self._call_with_account_failover("file_upload", send_request) as response: # type: ignore
                 result = self.auth.read_json_response(response).get("result", {})
             debug_dump(self.logger, self.config.debug_dump_all, "GLM 文件上传响应 result", result)
-            source_id = result.get("source_id") # type: ignore
+            source_id = result.get("file_id") or result.get("source_id") # type: ignore
             file_result_url = result.get("file_url", file_url) # type: ignore
             if not source_id:
                 return None
             if is_image:
-                return {"type": "image_url", "image_url": {"url": file_result_url or source_id}}
+                # 网页版 stream 接口识别的 vision part 格式（2026-08-25 实测验证）：
+                # text 必须与 image 位于同一个 part 内，image 数组项用 image_id + image_url
+                return {
+                    "type": "image",
+                    "image": [{"image_id": source_id, "image_url": file_result_url or source_id}],
+                }
             return {"type": "file", "file": [{"source_id": source_id, "file_url": file_result_url}]}
         except Exception as exc:
             self.logger.warning("上传附件失败 url=%s error=%s", file_url, exc)
