@@ -739,3 +739,68 @@ def test_accumulator_coerces_server_side_question_item_list_argument():
     assert '"name":"question"' in output
     assert '\\"questions\\":[{\\"question\\":\\"技术栈？\\"}' in output
     assert '"finish_reason":"tool_calls"' in output
+
+
+def test_degraded_answer_flags_pure_reasoning_truncation():
+    acc = GLMEventAccumulator(model="glm-5.3")
+    acc.consume_event(
+        _event(
+            [{"logic_id": "1", "role": "assistant", "content": [{"type": "think", "think": "发现了一些问题，首先是"}]}],
+            status="finish",
+        )
+    )
+    degraded, reason = acc.degraded_answer()
+    assert degraded
+    assert "reasoning_len" in reason
+    assert "发现了一些问题" in reason
+
+
+def test_degraded_answer_ignores_visible_text():
+    acc = GLMEventAccumulator(model="glm-5.3")
+    acc.consume_event(
+        _event(
+            [
+                {
+                    "logic_id": "1",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "think", "think": "思考中"},
+                        {"type": "text", "text": "已完成。"},
+                    ],
+                }
+            ],
+            status="finish",
+        )
+    )
+    degraded, _ = acc.degraded_answer()
+    assert not degraded
+
+
+def test_degraded_answer_ignores_server_side_tool_calls():
+    acc = GLMEventAccumulator(model="glm-5.3", allowed_tool_names={"bash"})
+    acc.consume_event(
+        _event(
+            [
+                {
+                    "logic_id": "1",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "think", "think": "让我运行一下"},
+                        {
+                            "type": "tool_calls",
+                            "tool_calls": {"id": "call_1", "name": "bash", "arguments": '{"command": "ls"}'},
+                        },
+                    ],
+                }
+            ],
+            status="finish",
+        )
+    )
+    degraded, _ = acc.degraded_answer()
+    assert not degraded
+
+
+def test_degraded_answer_ignores_empty_answer():
+    acc = GLMEventAccumulator(model="glm-5.3")
+    degraded, _ = acc.degraded_answer()
+    assert not degraded

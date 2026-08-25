@@ -239,6 +239,9 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
   原文再加恢复路径，或临时换 `glm-4.7` 对比，再不行评估 HelloGML 备选方案。
 - **延迟**：上游为网页版免费通道，首 token 较慢（实测一次完整问答约 70s，含游客取号），
   并发排队/上游忙时代理会自动重试（最多 30 次）。
+- **think 模式配额截断**：网页免费通道对 think 模式有每轮生成配额，思考吃光配额后线路被
+  静默掐断并伪装成正常结束（`finish_reason=stop`）。代理现已自动续话 + 截断告警（见 §11），
+  但 **agent 任务一律用非 think 版 `glm-5.3`**（用户决定，2026-08-25）。
 - **代理只在本机**：不在 Tailscale 服务器上，其他设备用不了。
 
 ## 9. 关键文件索引
@@ -258,8 +261,8 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
 | `~/.config/opencode/opencode.jsonc` | OpenCode 全局配置（含 `glmweb` provider） |
 | `glm2api/回复.md` | 2026-08-25 用户在网页版抓取的故障对话（第二轮根因证据，见 §7） |
 | `README.md` | 开源门面（GitHub 首页）：特性、快速开始、客户端接入、免责声明 |
-| `LESSONS.md` | 踩坑记录：8 条已验证教训 + 通用排查方法 |
-| `DECISIONS.md` | 关键决策与理由（D1-D10） |
+| `LESSONS.md` | 踩坑记录：9 条已验证教训 + 通用排查方法 |
+| `DECISIONS.md` | 关键决策与理由（D1-D11） |
 | `LICENSE` | GPLv3（与上游 glm2api 一致） |
 | `.gitignore` | 敏感文件排除规则（token.txt / .env / log/ / 回复.md / .local/） |
 | `.local/` | 本地备份区（不入库）：上游 git 备份 + 本地修改 patch |
@@ -289,3 +292,33 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
 
 **许可证注意**：本项目是 glm2api 的衍生作品，GPLv3 传染，**必须**以 GPLv3 开源，
 不能换 MIT/Apache。若日后想闭源分发，只能放弃修改并单独使用上游原版。
+
+## 11. 第三轮：think 模式配额截断 → 自动续话 / 思考可见 / 截断告警（2026-08-25）
+
+**问题**：OpenCode 用 `glm-5.3-think` 跑 Word 文档尽调任务，处理约 5 分钟后对话直接结束、
+看不到结果。日志查实：模型**真干了活**（python-docx 抽取、读 wiki、核数），但最后一轮
+`text_len=533 reasoning_len=533`（全是思考、零可见正文），思考停在半句"发现了一些……"，
+`finish_reason=stop`、tool_calls=0。即上游网页免费通道在 think 模式每轮生成配额被思考吃光后
+把线路掐断、伪装成正常结束，OpenCode 以为任务完成就收工了。
+
+**已验证结论**：
+
+- **agent 任务用非 think 版 `glm-5.3`**：用户实测整体完全输出、无截断。用户决定以后不再用 Think 版。
+- 思考内容经 `reasoning_content` 字段实时转发（OpenCode 二进制确认读取该字段，出现 858 处），
+  理论上 OpenCode 可显示思考过程；最终效果以用户在 OpenCode 实测为准。
+
+**改动**（全在代理侧，客户端零改动）：
+
+1. **自动续话**：`GLMEventAccumulator.degraded_answer()`（translator.py）检测"退化解"——
+   无可见正文 + 无工具调用 + 纯思考且戛然而止。流式/非流式两条路径都在 finish 后检查，
+   命中则 `_open_continuation_stream`（glm_client.py）在同一上游会话补发固定短提示
+   "你上一条回复中途被截断了。请从中断处直接继续，不要重复已经说过的内容。"，续文拼进
+   同一 SSE 流；复用 assistant_id / chat_mode / 工具定义 / 账号池与忙碌重试。
+   上限 `GLM_AUTO_CONTINUE_MAX`（默认 2），`GLM_AUTO_CONTINUE=false` 可关；`intervene` 永不续话。
+2. **截断告警**：凡检测到截断，无论走哪条路（发续话 / 已关闭 / 次数用完 / 续话失败 /
+   无 conversation_id）都输出明确 warning 到 `/tmp/glm2api.log`，不再假装正常结束。
+3. **思考可见**：确认现有 `reasoning_content` 转发即可，未额外加字段。
+
+**测试**：67 → **76 passed**（新增 9 个：退化解检测 4 + 续话判定 5）。
+**配置**：`GLM_AUTO_CONTINUE`（默认 true）、`GLM_AUTO_CONTINUE_MAX`（默认 2），
+已写入 `.env` / `.env.example` / README。

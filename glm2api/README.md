@@ -113,6 +113,13 @@ GLM_GUEST_MAX_RETRIES=3
 - `GLM_MAX_CONCURRENCY`
   本地代理允许同时占用的上游执行槽位数量，默认 `3`
 
+- `GLM_AUTO_CONTINUE`
+  是否启用自动续话（默认 `true`）。上游网页通道偶尔会把一轮回复截断、只剩思考内容没有
+  正文，启用后代理会在同一上游会话内自动补发"请继续"让模型把话说完
+
+- `GLM_AUTO_CONTINUE_MAX`
+  单次回复最多自动续话次数，默认 `2`
+
 - `SERVER_API_KEYS`
   如果你希望访问本地代理时也带 Bearer Token，可以在这里填写
 

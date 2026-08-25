@@ -14,6 +14,10 @@
 - 2026-08-25 已加固 `glm2api/src/glm2api/utils/tool_parser.py`（CDATA 数组 / 双重编码 JSON /
   幻觉闭合标签三类恢复；原版备份 `tool_parser.py.bak-20260825`），OpenCode `question` 工具
   往返已打通，详见 PROJECT.md §6
+- 2026-08-25 第三轮（详见 PROJECT.md §11）：**自动续话**（检测"截断且只剩思考"的退化解，
+  同一上游会话补发"请继续"，`GLM_AUTO_CONTINUE` 默认 true / `GLM_AUTO_CONTINUE_MAX` 默认 2，
+  改后需重启）+ 截断告警日志 + 思考经 `reasoning_content` 转发。**OpenCode agent 任务用非
+  think 版 `glm-5.3`**（Think 版有每轮配额截断，用户决定不再用）。测试套件当前 76 passed
 - 2026-08-25 第二轮修复（详见 PROJECT.md §7）：上游 moe_47/moe_5 双后端随机路由，moe_5 的
   all-tools 层会服务端误执行外来工具并回 `status:error` part → 代理现在识别并忽略这类 part
   （`is_server_side_tool_error_part`），不再抛 502；字符串化的 array/object 工具参数按 schema
@@ -23,7 +27,7 @@
 
 ## 注意事项（重要）
 
-- **排查任何故障前，先读 [LESSONS.md](LESSONS.md)**（8 条已验证教训，避免重走弯路）；
+- **排查任何故障前，先读 [LESSONS.md](LESSONS.md)**（9 条已验证教训，避免重走弯路）；
   重要技术决策及其理由见 [DECISIONS.md](DECISIONS.md)。
 - 本目录已是 git 仓库（main 分支）：**token.txt / .env / log/ / 回复.md / .local/ 永不提交**，
   提交前用 `git grep -i "eyJhbGci"` 自查。上游 glm2api 的 .git 备份在 `.local/glm2api-upstream-git`。

@@ -582,6 +582,21 @@ class GLMEventAccumulator:
         debug_dump(self.logger or logging.getLogger("glm2api.null"), self.debug_enabled, "GLM SSE 生成增量块", chunks)
         return chunks, str(payload.get("status")) if payload.get("status") is not None else None
 
+    def degraded_answer(self) -> tuple[bool, str]:
+        """检测"中途被截断"的退化解：没有可见正文、没有工具调用、只有思考内容，且思考戛然而止。
+
+        上游网页版免费通道在生成配额耗尽时会把线路掐断并伪装成正常结束（finish_reason=stop），
+        典型表现是 text_len=0、tool_calls=0、reasoning 停在半句话。
+        返回 (是否退化, 描述)；描述用于截断告警日志。
+        """
+        if self._cached_full_text.strip() or self._server_side_tool_calls:
+            return False, ""
+        reasoning = self._cached_full_reasoning
+        if not reasoning.strip():
+            return False, ""
+        tail = reasoning.rstrip()[-24:].replace("\n", "\\n")
+        return True, f"reasoning_len={len(reasoning)} tail={tail!r}"
+
     def finalize(self, status: str | None, last_error: dict[str, object] | None = None) -> list[str]:
         tail_text, xml_tool_calls = self.tool_parser.flush()
         xml_tool_calls = sanitize_tool_calls(xml_tool_calls, fallback_url=self.fallback_tool_url)

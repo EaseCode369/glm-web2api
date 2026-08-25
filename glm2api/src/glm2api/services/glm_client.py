@@ -195,20 +195,51 @@ class GLMWebClient:
             debug_enabled=self.config.debug_dump_all,
             logger=self.logger,
         )
+        chat_mode, is_networking = self._chat_session_options(payload)
+        current_response = response
+        continue_count = 0
         try:
-            for event in self._iter_sse_events(response):
-                if not event:
-                    continue
-                status = event.get("status")
-                self._raise_for_event_error(event, stream=False)
-                accumulator.consume_event(event)
-                if status in {"finish", "intervene"}:
-                    return accumulator.build_response(), accumulator.conversation_id
+            while True:
+                finished = "stop"
+                for event in self._iter_sse_events(current_response):
+                    if not event:
+                        continue
+                    status = event.get("status")
+                    self._raise_for_event_error(event, stream=False)
+                    accumulator.consume_event(event)
+                    if status in {"finish", "intervene"}:
+                        finished = str(status)
+                        break
+
+                degraded, degrade_reason = accumulator.degraded_answer()
+                if self._should_auto_continue(
+                    accumulator=accumulator,
+                    finished=finished,
+                    degraded=degraded,
+                    degrade_reason=degrade_reason,
+                    continue_count=continue_count,
+                ):
+                    continue_count += 1
+                    current_response.close() # type: ignore
+                    try:
+                        current_response = self._open_continuation_stream(
+                            assistant_id=assistant_id,
+                            conversation_id=accumulator.conversation_id,
+                            chat_mode=chat_mode,
+                            is_networking=is_networking,
+                            filtered_tools=filtered_tools,
+                            preferred_account_index=self._get_preferred_account_index(lease.ticket),
+                        )
+                    except Exception as exc:
+                        self.logger.warning("续话请求失败，按现状收尾 error=%s", exc)
+                    else:
+                        continue
+
+                return accumulator.build_response(), accumulator.conversation_id
         finally:
-            response.close() # type: ignore
+            current_response.close() # type: ignore
             self.delete_conversation(accumulator.conversation_id, assistant_id=assistant_id)
             lease.release()
-        return accumulator.build_response(), accumulator.conversation_id
 
     def generate_images(self, payload: dict[str, object]) -> dict[str, object]:
         lease = self.request_queue.acquire(f"image:{payload.get('model', self.config.glm_image_model_name)}")
@@ -247,6 +278,7 @@ class GLMWebClient:
             lease.release()
             raise
 
+        chat_mode, is_networking = self._chat_session_options(payload)
         accumulator = GLMEventAccumulator(
             model=str(payload["model"]),
             allowed_tool_names=allowed_tool_names,
@@ -257,27 +289,55 @@ class GLMWebClient:
         )
 
         def generate():
+            current_response = response
+            continue_count = 0
+            last_status = "stop"
+            last_error: dict[str, object] | None = None
             try:
-                for event in self._iter_sse_events(response):
-                    if not event:
-                        continue
-                    self._raise_for_event_error(event, stream=True)
-                    chunks, status = accumulator.consume_event(event)
-                    for chunk in chunks:
-                        yield chunk.encode("utf-8")
-
-                    if status in {"finish", "intervene"}:
-                        for chunk in accumulator.finalize(
-                            status=status,
-                            last_error=event.get("last_error") if isinstance(event.get("last_error"), dict) else None,
-                        ):
+                while True:
+                    for event in self._iter_sse_events(current_response):
+                        if not event:
+                            continue
+                        self._raise_for_event_error(event, stream=True)
+                        chunks, status = accumulator.consume_event(event)
+                        for chunk in chunks:
                             yield chunk.encode("utf-8")
-                        return
 
-                for chunk in accumulator.finalize(status="stop"):
-                    yield chunk.encode("utf-8")
+                        if status in {"finish", "intervene"}:
+                            last_status = str(status)
+                            last_error = event.get("last_error") if isinstance(event.get("last_error"), dict) else None
+                            break
+
+                    degraded, degrade_reason = accumulator.degraded_answer()
+                    if self._should_auto_continue(
+                        accumulator=accumulator,
+                        finished=last_status,
+                        degraded=degraded,
+                        degrade_reason=degrade_reason,
+                        continue_count=continue_count,
+                    ):
+                        continue_count += 1
+                        current_response.close() # type: ignore
+                        try:
+                            current_response = self._open_continuation_stream(
+                                assistant_id=assistant_id,
+                                conversation_id=accumulator.conversation_id,
+                                chat_mode=chat_mode,
+                                is_networking=is_networking,
+                                filtered_tools=filtered_tools,
+                                preferred_account_index=self._get_preferred_account_index(lease.ticket),
+                            )
+                        except Exception as exc:
+                            self.logger.warning("续话请求失败，按现状收尾 error=%s", exc)
+                            degraded = False
+                        else:
+                            continue
+
+                    for chunk in accumulator.finalize(status=last_status, last_error=last_error):
+                        yield chunk.encode("utf-8")
+                    return
             finally:
-                response.close() # type: ignore
+                current_response.close() # type: ignore
                 self.delete_conversation(accumulator.conversation_id, assistant_id=assistant_id)
                 lease.release()
 
@@ -517,6 +577,156 @@ class GLMWebClient:
             preferred_account_index=preferred_account_index,
         )
         return response, assistant_id
+
+    def _chat_session_options(self, payload: dict[str, object]) -> tuple[str, bool]:
+        """从 OpenAI payload 推导出与首轮一致的上游会话选项（chat_mode / is_networking）。"""
+        model = str(payload.get("model", "glm-4"))
+        return (
+            resolve_chat_mode(
+                model=model,
+                reasoning_effort=payload.get("reasoning_effort"),
+                deep_research=payload.get("deep_research"),
+            ),
+            resolve_networking(model=model, web_search=payload.get("web_search")),
+        )
+
+    def _should_auto_continue(
+        self,
+        *,
+        accumulator: "GLMEventAccumulator",
+        finished: str,
+        degraded: bool,
+        degrade_reason: str,
+        continue_count: int,
+    ) -> bool:
+        """判断本轮是否应该自动续话；检测到截断但无法续话时输出明确的告警日志。"""
+        if not degraded:
+            return False
+        if finished == "intervene":
+            self.logger.warning(
+                "检测到中途截断，但上游已人工介入（intervene），不自动续话 | %s",
+                degrade_reason,
+            )
+            return False
+        if not self.config.glm_auto_continue:
+            self.logger.warning("检测到中途截断（自动续话已关闭 GLM_AUTO_CONTINUE=false），按现状收尾 | %s", degrade_reason)
+            return False
+        if continue_count >= self.config.glm_auto_continue_max:
+            self.logger.warning(
+                "检测到中途截断，自动续话次数已用完 (%d/%d)，按现状收尾 | %s",
+                continue_count,
+                self.config.glm_auto_continue_max,
+                degrade_reason,
+            )
+            return False
+        if not accumulator.conversation_id:
+            self.logger.warning("检测到中途截断，但没有上游 conversation_id 可续话，按现状收尾 | %s", degrade_reason)
+            return False
+        self.logger.warning(
+            "检测到中途截断（无可见正文/无工具调用，纯思考被掐断），发送续话请求 %d/%d conversation_id=%s | %s",
+            continue_count + 1,
+            self.config.glm_auto_continue_max,
+            accumulator.conversation_id,
+            degrade_reason,
+        )
+        return True
+
+    def _open_continuation_stream(
+        self,
+        *,
+        assistant_id: str,
+        conversation_id: str,
+        chat_mode: str,
+        is_networking: bool,
+        filtered_tools: list[dict[str, object]] | None,
+        preferred_account_index: int | None = None,
+    ):
+        """自动续话：在同一上游会话里补发一条"请继续"，复用同样的工具定义、chat_mode 与账号池。"""
+        prompt = "你上一条回复中途被截断了。请从中断处直接继续，不要重复已经说过的内容。"
+        converted_messages = convert_messages(
+            messages=[{"role": "user", "content": prompt}],
+            tools=filtered_tools,
+            blocked_tool_names={name.strip() for name in self.config.blocked_tool_names if name.strip()},
+            server_side_tool_names=SERVER_SIDE_TOOL_NAMES,
+        )
+        request_body = json.dumps(
+            {
+                "assistant_id": assistant_id,
+                "conversation_id": conversation_id,
+                "project_id": "",
+                "chat_type": "user_chat",
+                "messages": converted_messages,
+                "meta_data": {
+                    "channel": "",
+                    "chat_mode": chat_mode,
+                    "draft_id": "",
+                    "if_plus_model": True,
+                    "input_question_type": "xxxx",
+                    "is_networking": is_networking,
+                    "is_test": False,
+                    "platform": "pc",
+                    "quote_log_id": "",
+                    "cogview": {"rm_label_watermark": False},
+                },
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        self.logger.info("续话请求 conversation_id=%s chat_mode=%s", conversation_id, chat_mode)
+        debug_dump(self.logger, self.config.debug_dump_all, "续话请求体", request_body)
+
+        def send_request(account_index: int, access_token: str):
+            for attempt in range(self.config.glm_busy_max_retries + 1):
+                try:
+                    timestamp, nonce, sign = build_sign()
+                    request = urllib.request.Request(
+                        self.config.chat_stream_url,
+                        data=request_body,
+                        method="POST",
+                        headers={
+                            **self.auth.get_browser_headers(),
+                            "Authorization": f"Bearer {access_token}",
+                            "X-Device-Id": uuid.uuid4().hex,
+                            "X-Nonce": nonce,
+                            "X-Request-Id": uuid.uuid4().hex,
+                            "X-Sign": sign,
+                            "X-Timestamp": timestamp,
+                        },
+                    )
+                    debug_dump(
+                        self.logger,
+                        self.config.debug_dump_all,
+                        f"续话请求头 account={account_index} attempt={attempt + 1}",
+                        dict(request.header_items()),
+                    )
+                    return self._prepare_chat_response(
+                        urllib.request.urlopen(request, timeout=self.config.request_timeout)
+                    )
+                except urllib.error.HTTPError as exc:
+                    error_payload = self._read_error_payload(exc)
+                    if self._should_retry_busy_error(exc.code, error_payload) and attempt < self.config.glm_busy_max_retries:
+                        wait_seconds = self.config.glm_busy_retry_interval
+                        self.logger.warning(
+                            "续话请求遇忙碌，等待重试 attempt=%s/%s wait=%.1fs account=%s",
+                            attempt + 1,
+                            self.config.glm_busy_max_retries,
+                            wait_seconds,
+                            account_index,
+                        )
+                        time.sleep(wait_seconds)
+                        continue
+
+                    message = self._build_error_message(exc.code, error_payload)
+                    raise UpstreamAPIError(status_code=exc.code, message=message, payload=error_payload) from exc
+
+            raise UpstreamAPIError(status_code=429, message="GLM 长时间忙碌，请稍后重试。")
+
+        return self._call_with_account_failover(
+            f"chat-continue:{conversation_id}",
+            send_request,
+            preferred_account_index=preferred_account_index,
+        )
 
     def _open_image_stream(self, payload: dict[str, object], preferred_account_index: int | None = None):
         prompt = str(payload.get("prompt", "")).strip()
