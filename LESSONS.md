@@ -135,3 +135,7 @@
 - **教训**：一条"看图"链路有三个独立闸门（客户端能力声明 / 代理上传引用 / 上游 part
   格式），必须逐层用日志定界，修完一层重测下一层；`DEBUG_DUMP_ALL=true` 下对比
   "OpenAI 原始 payload"和"转发到 GLM 的 chat 原始请求体"两段日志是最快的定界手段。
+- **补充（同日二次返工）**：OpenCode 配置键名一开始写成了 `capabilities.input.image`，
+  没生效。真实入口是模型条目的 **`modalities: { input: ["text","image"] }`**
+  （从 opencode.exe 里 `C.modalities?.input?.includes("image")` 确认；`capabilities`
+  是内置模型的内部格式，配置层不认）。改完配置必须**完全重启 OpenCode** 才生效。

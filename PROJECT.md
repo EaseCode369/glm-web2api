@@ -350,9 +350,9 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
   GLM-5.3 本身支持图片理解，预期代理也应支持。
 - **三层修复**（详见 LESSONS.md L11 / DECISIONS.md D13）：
   1. **OpenCode 配置**（`~/.config/opencode/opencode.jsonc`）：三个模型条目加
-     `"capabilities": {"attachment": true, "input": {"text": true, "image": true}}`
-     （键名从 opencode 二进制里的模型 schema 确认）。旧配置备份
-     `opencode.jsonc.bak-20260825-vision`。
+     `"modalities": { "input": ["text", "image"], "output": ["text"] }`
+     （键名从 opencode.exe 解析代码确认；曾误写 `capabilities` 不生效，见 LESSONS L11
+     补充。改完需完全重启 OpenCode）。旧配置备份 `opencode.jsonc.bak-20260825-vision`。
   2. **代理字段 bug**：`glm_client.py` `_upload_file_reference` 原来读
      `result.get("source_id")`，file_upload 接口真实返回字段是 `file_id`，上传成功后
      图片引用被静默丢弃。现改为 `result.get("file_id") or result.get("source_id")`。
