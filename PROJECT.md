@@ -245,7 +245,9 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
 
 | 路径 | 说明 |
 |---|---|
-| `glm2api/` | 代理服务源码（勿随意改动；上游更新用 `git pull` + `./stop.sh && ./start.sh`） |
+| `glm2api/` | 代理服务源码（勿随意改动）。⚠️ 2026-08-25 起其内部 `.git` 已移至
+  `.local/glm2api-upstream-git`（开源准备，见 §10）；同步上游方法：重新 clone 官方仓库，
+  对比 `.local/glm2api-local-changes-20260825.patch` 后决定合并方式 |
 | `glm2api/src/glm2api/utils/tool_parser.py.bak-20260825` | 工具解析器加固前原版（2026-08-25 补丁，见 §6） |
 | `glm2api/.env` | 运行配置（端口/并发/token） |
 | `glm2api/start.sh` / `stop.sh` | 启停脚本（start.sh 用 start_new_session 脱离会话） |
@@ -255,3 +257,35 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
 | `~/.codex/cc-switch-model-catalog.json` | Codex 模型目录（含 `glm-5.3` 条目） |
 | `~/.config/opencode/opencode.jsonc` | OpenCode 全局配置（含 `glmweb` provider） |
 | `glm2api/回复.md` | 2026-08-25 用户在网页版抓取的故障对话（第二轮根因证据，见 §7） |
+| `README.md` | 开源门面（GitHub 首页）：特性、快速开始、客户端接入、免责声明 |
+| `LESSONS.md` | 踩坑记录：8 条已验证教训 + 通用排查方法 |
+| `DECISIONS.md` | 关键决策与理由（D1-D10） |
+| `LICENSE` | GPLv3（与上游 glm2api 一致） |
+| `.gitignore` | 敏感文件排除规则（token.txt / .env / log/ / 回复.md / .local/） |
+| `.local/` | 本地备份区（不入库）：上游 git 备份 + 本地修改 patch |
+| git 仓库 | 顶层已 `git init`（main 分支，初始提交 2026-08-25，身份 EaseCode369） |
+
+## 10. 开源准备（2026-08-25）
+
+**已完成**：
+
+- 顶层 `git init`（main 分支）+ 初始提交；提交身份用 GitHub 账号 EaseCode369
+  的 noreply 邮箱（仓库级 git config）。
+- 根 `.gitignore` 强制排除：`token.txt`（真实凭据）、`.env`、`log/`（含对话原文）、
+  `glm2api/回复.md`（用户真实会话）、`.local/`、`*.bak-*`、Python 产物。
+  已验证暂存区无任何 JWT/凭据内容（`git grep --cached` 扫描通过）。
+- `README.md`（开源门面，含 ToS 免责声明）、`LICENSE`（GPLv3，与上游一致）、
+  `LESSONS.md`、`DECISIONS.md` 已就位。
+- `glm2api/.git` 移至 `.local/glm2api-upstream-git`（保留完整上游历史与未提交状态，
+  可逆）；本地全部修改存为 `.local/glm2api-local-changes-20260825.patch`（581 行）。
+  服务运行不受影响（进程已加载，且 start.sh 不依赖 .git）。
+
+**待用户操作**：
+
+1. GitHub 建仓（建议私有先行，确认无泄露再转公开）：`gh repo create <name> --source . --push`。
+   建仓前最后自查：`git grep -i "eyJhbGci"` 应无结果。
+2. 决定仓库名与可见性；若公开，README 免责声明已覆盖 ToS 风险声明。
+3. 上游同步策略（见 §9 索引与 DECISIONS.md D7）：重新 clone 官方仓库 + 对比 patch。
+
+**许可证注意**：本项目是 glm2api 的衍生作品，GPLv3 传染，**必须**以 GPLv3 开源，
+不能换 MIT/Apache。若日后想闭源分发，只能放弃修改并单独使用上游原版。

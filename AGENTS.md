@@ -23,6 +23,11 @@
 
 ## 注意事项（重要）
 
+- **排查任何故障前，先读 [LESSONS.md](LESSONS.md)**（8 条已验证教训，避免重走弯路）；
+  重要技术决策及其理由见 [DECISIONS.md](DECISIONS.md)。
+- 本目录已是 git 仓库（main 分支）：**token.txt / .env / log/ / 回复.md / .local/ 永不提交**，
+  提交前用 `git grep -i "eyJhbGci"` 自查。上游 glm2api 的 .git 备份在 `.local/glm2api-upstream-git`。
+
 - **端口 8000 被用户的 Personal OS 服务（uvicorn）占用，严禁改动或杀该进程。**
 - 不要修改 `~/.codex/config.toml` 里现有的 `[model_providers.custom]` 段和当前生效的
   `model_provider` / `model` 值（用户在用），本项目的段是 `[model_providers.glmweb]`。
