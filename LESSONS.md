@@ -92,12 +92,28 @@
 
 - **现象**：OpenCode 用 glm-5.3-think 跑长任务，模型实际干了约 5 分钟活，最后一轮无正文、
   无工具调用，思考停在半句话，`finish_reason=stop`，客户端以为完成直接收工。
-- **真根因**：上游网页免费通道对 think 模式有每轮生成配额，思考吃光配额后线路被静默掐断、
-  伪装正常结束。日志是判断依据（`响应收尾` 行的 text_len vs reasoning_len + 思考末尾是否半句）。
+- **真根因**：上游在思考中途掐断线路并伪装正常结束（`finish_reason=stop`）。
+  具体机制（单轮生成上限 / 服务端强制终止 / 风控）**无法从代理侧完全确认**——"每轮时长配额"
+  是早期推测，不可靠（仅 533 字思考，远够不着常规输出上限）。日志是判断依据
+  （`响应收尾` 行的 text_len vs reasoning_len + 思考末尾是否半句）。
 - **解法**：① agent 任务用非 think 版 glm-5.3（用户决定）；② 代理自动检测"退化解"并同会话
   补发"请继续"，最多 2 次（DECISIONS.md D11）；③ 所有截断路径都有明确 warning 日志。
 - **教训**：模型"没说话但回合结束"时不要默认模型偷懒，先查日志确认是"真没产出"还是
   "思考被掐断"；`finish_reason=stop` 不保证是自然结束。
+
+## L10 风控介入（intervene）≠ 传输错误：一次 502 其实是内容审查拒绝（2026-08-25 晚）
+
+- **现象**：OpenCode 收到 `GLM 上游返回错误 | GLM stream request error`，对话直接结束。
+- **真根因**：日志 14:37:11 查实那次是上游**风控介入**：模型思考内容（"以下是常用于测试
+  大模型思维能力的10道题目…"）触发 `intervene_type=output_sensitive`、`risk_level=REJECT`，
+  事件 status=intervene 且带 last_error。旧代码 `_raise_for_event_error` 只豁免
+  "status=error 且无错误负载"，intervene 带着 last_error 直接抛 502 掐断流。
+- **解法**：`_raise_for_event_error` 把 intervene 单独处理——只打 warning、不抛错，收尾逻辑
+  正常结束并把介入文案附给客户端；**永不重试**（同样内容大概率再被拒，只会加重风控压力）。
+  网络类断线才走断线自动重试（DECISIONS.md D12）。
+- **教训**：`status=intervene` 和 `status=error` 语义完全不同，前者是内容审查的决定，
+  重试无意义。风控确实会审查输出内容（生成"测试 LLM 的题目"这类内容就可能触发
+  output_sensitive）——侧面印证了"审查能分辨是不是 Agent 在调用"的猜测。
 
 ## 通用排查方法（本项目验证有效）
 

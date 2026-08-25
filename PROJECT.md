@@ -319,6 +319,22 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
    无 conversation_id）都输出明确 warning 到 `/tmp/glm2api.log`，不再假装正常结束。
 3. **思考可见**：确认现有 `reasoning_content` 转发即可，未额外加字段。
 
-**测试**：67 → **76 passed**（新增 9 个：退化解检测 4 + 续话判定 5）。
+**测试**：67 → 76 passed（新增 9 个：退化解检测 4 + 续话判定 5）。
 **配置**：`GLM_AUTO_CONTINUE`（默认 true）、`GLM_AUTO_CONTINUE_MAX`（默认 2），
 已写入 `.env` / `.env.example` / README。
+
+### 11.1 同日傍晚补充："GLM stream request error" 502 根因 + intervene 修复 + 断线自动重试
+
+1. **502 根因查实**：14:37:11 那次断流不是网络问题，是上游**风控介入**——模型思考内容
+   （"以下是常用于测试大模型思维能力的10道题目…"）触发 `output_sensitive` / `REJECT`，
+   旧代码把带 last_error 的 intervene 事件当传输错误抛 502。已修复：intervene 正常收尾
+   并把介入文案发给客户端，**不重试**（见 LESSONS L10）。
+2. **断线自动重试**（`GLM_STREAM_RETRY_MAX`，默认 1，设 0 关闭）：流式/非流式传输中途
+   遇到网络类错误时自动再试，对客户端透明——尚未输出任何内容 → 整体重发原始请求
+   （`accumulator.reset()` + 废弃旧会话并清理）；已输出一部分 → 走同会话续话（复用
+   `_open_continuation_stream`）。重试打开失败或次数用尽才抛错。
+3. "配额"说法更正：think 模式截断的具体机制（单轮上限/服务端强停/风控）无法从代理侧
+   确认，"每轮时长配额"是早期推测，已按事实修正（LESSONS L9）。
+
+**测试**：76 → **81 passed**（新增 5 个：整体重发 / 半路续话 / 重试耗尽 / intervene
+正常收尾 / accumulator.reset）。

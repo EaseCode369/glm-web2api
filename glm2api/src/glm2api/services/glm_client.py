@@ -198,18 +198,54 @@ class GLMWebClient:
         chat_mode, is_networking = self._chat_session_options(payload)
         current_response = response
         continue_count = 0
+        retry_count = 0
+        abandoned_conversations: list[str] = []
         try:
             while True:
+                stream_error: Exception | None = None
                 finished = "stop"
-                for event in self._iter_sse_events(current_response):
-                    if not event:
-                        continue
-                    status = event.get("status")
-                    self._raise_for_event_error(event, stream=False)
-                    accumulator.consume_event(event)
-                    if status in {"finish", "intervene"}:
-                        finished = str(status)
-                        break
+                try:
+                    for event in self._iter_sse_events(current_response):
+                        if not event:
+                            continue
+                        status = event.get("status")
+                        self._raise_for_event_error(event, stream=False)
+                        accumulator.consume_event(event)
+                        if status in {"finish", "intervene"}:
+                            finished = str(status)
+                            break
+                except (UpstreamAPIError, OSError, http.client.HTTPException) as exc:
+                    stream_error = exc
+
+                if stream_error is not None:
+                    if retry_count >= self.config.glm_stream_retry_max:
+                        raise stream_error
+                    retry_count += 1
+                    self.logger.warning(
+                        "非流式请求中途出错，整体重试 %d/%d error=%s",
+                        retry_count,
+                        self.config.glm_stream_retry_max,
+                        stream_error,
+                    )
+                    current_response.close() # type: ignore
+                    try:
+                        current_response = self._open_chat_stream(
+                            payload,
+                            preferred_account_index=self._get_preferred_account_index(lease.ticket),
+                        )[0]
+                    except Exception as exc:
+                        raise stream_error from exc
+                    if accumulator.conversation_id:
+                        abandoned_conversations.append(accumulator.conversation_id)
+                    accumulator = GLMEventAccumulator(
+                        model=str(payload["model"]),
+                        allowed_tool_names=allowed_tool_names,
+                        fallback_tool_url=extract_recent_user_url(list(payload.get("messages", []))), # type: ignore[arg-type]
+                        tool_schemas=self._tool_schemas_from(filtered_tools),
+                        debug_enabled=self.config.debug_dump_all,
+                        logger=self.logger,
+                    )
+                    continue
 
                 degraded, degrade_reason = accumulator.degraded_answer()
                 if self._should_auto_continue(
@@ -238,6 +274,8 @@ class GLMWebClient:
                 return accumulator.build_response(), accumulator.conversation_id
         finally:
             current_response.close() # type: ignore
+            for conversation_id in abandoned_conversations:
+                self.delete_conversation(conversation_id, assistant_id=assistant_id)
             self.delete_conversation(accumulator.conversation_id, assistant_id=assistant_id)
             lease.release()
 
@@ -291,22 +329,72 @@ class GLMWebClient:
         def generate():
             current_response = response
             continue_count = 0
+            retry_count = 0
+            abandoned_conversations: list[str] = []
             last_status = "stop"
             last_error: dict[str, object] | None = None
             try:
                 while True:
-                    for event in self._iter_sse_events(current_response):
-                        if not event:
-                            continue
-                        self._raise_for_event_error(event, stream=True)
-                        chunks, status = accumulator.consume_event(event)
-                        for chunk in chunks:
-                            yield chunk.encode("utf-8")
+                    stream_error: Exception | None = None
+                    try:
+                        for event in self._iter_sse_events(current_response):
+                            if not event:
+                                continue
+                            self._raise_for_event_error(event, stream=True)
+                            chunks, status = accumulator.consume_event(event)
+                            for chunk in chunks:
+                                yield chunk.encode("utf-8")
 
-                        if status in {"finish", "intervene"}:
-                            last_status = str(status)
-                            last_error = event.get("last_error") if isinstance(event.get("last_error"), dict) else None
-                            break
+                            if status in {"finish", "intervene"}:
+                                last_status = str(status)
+                                last_error = event.get("last_error") if isinstance(event.get("last_error"), dict) else None
+                                break
+                    except (UpstreamAPIError, OSError, http.client.HTTPException) as exc:
+                        stream_error = exc
+
+                    if stream_error is not None:
+                        if retry_count >= self.config.glm_stream_retry_max:
+                            raise stream_error
+                        retry_count += 1
+                        current_response.close() # type: ignore
+                        if accumulator.has_any_content():
+                            self.logger.warning(
+                                "流式传输中途出错，已输出一部分内容，改走同会话续话重试 %d/%d error=%s",
+                                retry_count,
+                                self.config.glm_stream_retry_max,
+                                stream_error,
+                            )
+                            try:
+                                current_response = self._open_continuation_stream(
+                                    assistant_id=assistant_id,
+                                    conversation_id=accumulator.conversation_id,
+                                    chat_mode=chat_mode,
+                                    is_networking=is_networking,
+                                    filtered_tools=filtered_tools,
+                                    preferred_account_index=self._get_preferred_account_index(lease.ticket),
+                                )
+                            except Exception as exc:
+                                self.logger.warning("续话重试失败，放弃重试 error=%s", exc)
+                                raise stream_error from exc
+                        else:
+                            self.logger.warning(
+                                "流式传输中途出错且尚未输出任何内容，整体重发原始请求 %d/%d error=%s",
+                                retry_count,
+                                self.config.glm_stream_retry_max,
+                                stream_error,
+                            )
+                            try:
+                                current_response = self._open_chat_stream(
+                                    payload,
+                                    preferred_account_index=self._get_preferred_account_index(lease.ticket),
+                                )[0]
+                            except Exception as exc:
+                                self.logger.warning("重发原始请求失败，放弃重试 error=%s", exc)
+                                raise stream_error from exc
+                            if accumulator.conversation_id:
+                                abandoned_conversations.append(accumulator.conversation_id)
+                            accumulator.reset()
+                        continue
 
                     degraded, degrade_reason = accumulator.degraded_answer()
                     if self._should_auto_continue(
@@ -338,6 +426,8 @@ class GLMWebClient:
                     return
             finally:
                 current_response.close() # type: ignore
+                for conversation_id in abandoned_conversations:
+                    self.delete_conversation(conversation_id, assistant_id=assistant_id)
                 self.delete_conversation(accumulator.conversation_id, assistant_id=assistant_id)
                 lease.release()
 
@@ -347,6 +437,16 @@ class GLMWebClient:
         status = str(event.get("status", "")).strip().lower()
         last_error = event.get("last_error")
         event_error = self._extract_event_error(event)
+        if status == "intervene":
+            # 风控介入（output_sensitive 等）不是传输错误：不能 502 掐断流，
+            # 交由收尾逻辑正常结束（finalize 会把介入文案附给客户端）。也不应重试，
+            # 同样的内容大概率再次被拒，只会加重风控压力。
+            self.logger.warning(
+                "上游风控介入（intervene_type=%s risk_level=%s），按正常结束处理，不重试",
+                (last_error or {}).get("intervene_type") if isinstance(last_error, dict) else event_error.get("intervene_type"),
+                (last_error or {}).get("risk_level") if isinstance(last_error, dict) else event_error.get("risk_level"),
+            )
+            return
         if status != "error" and not event_error and not isinstance(last_error, dict):
             return
 

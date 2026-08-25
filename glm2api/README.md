@@ -120,6 +120,11 @@ GLM_GUEST_MAX_RETRIES=3
 - `GLM_AUTO_CONTINUE_MAX`
   单次回复最多自动续话次数，默认 `2`
 
+- `GLM_STREAM_RETRY_MAX`
+  流式传输中途断掉（网络抖动/上游临时错误）时的自动重试次数，默认 `1`，设 `0` 关闭。
+  尚未输出任何内容时整体重发原始请求；已输出一部分时在同一上游会话里续话。
+  上游风控介入（intervene）不属于断线，不会被重试
+
 - `SERVER_API_KEYS`
   如果你希望访问本地代理时也带 Bearer Token，可以在这里填写
 

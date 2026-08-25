@@ -154,6 +154,7 @@ class AppConfig:
     glm_busy_retry_interval: float
     glm_auto_continue: bool
     glm_auto_continue_max: int
+    glm_stream_retry_max: int
     glm_guest_max_retries: int
     blocked_tool_names: list[str]
     exposed_models: list[str]
@@ -277,6 +278,7 @@ def load_config(env_file: str = ".env") -> AppConfig:
         glm_busy_retry_interval=parse_float(values.get("GLM_BUSY_RETRY_INTERVAL_SECONDS"), 2.0),
         glm_auto_continue=parse_bool(values.get("GLM_AUTO_CONTINUE"), True),
         glm_auto_continue_max=max(0, parse_int(values.get("GLM_AUTO_CONTINUE_MAX"), 2)),
+        glm_stream_retry_max=max(0, parse_int(values.get("GLM_STREAM_RETRY_MAX"), 1)),
         glm_guest_max_retries=max(0, parse_int(values.get("GLM_GUEST_MAX_RETRIES"), 3)),
         blocked_tool_names=parse_list(values.get("BLOCKED_TOOL_NAMES"), DEFAULT_BLOCKED_TOOL_NAMES),
         exposed_models=exposed_models,  # type: ignore

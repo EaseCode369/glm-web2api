@@ -582,6 +582,40 @@ class GLMEventAccumulator:
         debug_dump(self.logger or logging.getLogger("glm2api.null"), self.debug_enabled, "GLM SSE 生成增量块", chunks)
         return chunks, str(payload.get("status")) if payload.get("status") is not None else None
 
+    def has_any_content(self) -> bool:
+        """是否已经产出任何内容（正文、思考或服务端工具调用）。
+
+        断线自动重试时用：没有任何内容 → 可以整体重发；已输出一半 → 只能走同会话续话。
+        """
+        return bool(
+            self._cached_full_text.strip()
+            or self._cached_full_reasoning.strip()
+            or self._server_side_tool_calls
+        )
+
+    def reset(self) -> None:
+        """丢弃当前累积状态（整体重发前调用），回到全新会话的起点。"""
+        self.conversation_id = ""
+        self.parts_by_logic_id.clear()
+        self.ordered_logic_ids.clear()
+        self.last_full_text = ""
+        self.last_full_reasoning = ""
+        self._part_text_sent.clear()
+        self._part_reasoning_sent.clear()
+        self._known_logic_ids_for_text.clear()
+        self._known_logic_ids_for_reasoning.clear()
+        self.tool_parser = StreamingToolParser()
+        self.tool_parser.allowed_tool_names = self.allowed_tool_names
+        self.emitted_role = False
+        self._render_cache_dirty = True
+        self._cached_full_text = ""
+        self._cached_full_reasoning = ""
+        self._cached_part_texts.clear()
+        self._cached_part_reasonings.clear()
+        self._server_side_tool_calls.clear()
+        self._server_side_tool_call_ids.clear()
+        self._deferred_visible_text = ""
+
     def degraded_answer(self) -> tuple[bool, str]:
         """检测"中途被截断"的退化解：没有可见正文、没有工具调用、只有思考内容，且思考戛然而止。
 
