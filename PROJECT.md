@@ -283,11 +283,17 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
   可逆）；本地全部修改存为 `.local/glm2api-local-changes-20260825.patch`（581 行）。
   服务运行不受影响（进程已加载，且 start.sh 不依赖 .git）。
 
-**待用户操作**：
+**已完成**（2026-08-25 晚）：
 
-1. GitHub 建仓（建议私有先行，确认无泄露再转公开）：`gh repo create <name> --source . --push`。
-   建仓前最后自查：`git grep -i "eyJhbGci"` 应无结果。
-2. 决定仓库名与可见性；若公开，README 免责声明已覆盖 ToS 风险声明。
+1. GitHub 仓库已建并推送：**`EaseCode369/glm-web2api`**（私有，main 分支）。
+   推送前自查通过：`git grep -nE "eyJ[A-Za-z0-9_-]{40,}"` 0 匹配，token.txt / .env /
+   .local / log / 回复.md 均未入库。
+2. 注意：本机直连 GitHub 会超时，git 需走系统代理
+   `git -c http.proxy=http://127.0.0.1:7897 -c https.proxy=http://127.0.0.1:7897 push`。
+
+**待用户决定**：
+
+1. 确认无泄露后是否转公开（`gh repo edit --visibility public`）；README 免责声明已覆盖 ToS 风险声明。
 3. 上游同步策略（见 §9 索引与 DECISIONS.md D7）：重新 clone 官方仓库 + 对比 patch。
 
 **许可证注意**：本项目是 glm2api 的衍生作品，GPLv3 传染，**必须**以 GPLv3 开源，
