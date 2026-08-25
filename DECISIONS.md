@@ -119,4 +119,6 @@
 - **客户端侧**：OpenCode 对自定义 provider 模型默认不声明 image 输入，会把图片替换成
   文字"ERROR: ... this model does not support image input"。解法是在
   `~/.config/opencode/opencode.jsonc` 的模型条目加
-  `"capabilities": {"attachment": true, "input": {"text": true, "image": true}}`。
+  `"modalities": { "input": ["text", "image"], "output": ["text"] }`
+  （键名从 opencode.exe 解析代码 `C.modalities?.input?.includes("image")` 确认；
+  曾误写 `capabilities` 不生效。改完需完全重启 OpenCode；2026-08-25 用户重测通过）。

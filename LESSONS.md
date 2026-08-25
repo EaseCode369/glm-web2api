@@ -138,4 +138,6 @@
 - **补充（同日二次返工）**：OpenCode 配置键名一开始写成了 `capabilities.input.image`，
   没生效。真实入口是模型条目的 **`modalities: { input: ["text","image"] }`**
   （从 opencode.exe 里 `C.modalities?.input?.includes("image")` 确认；`capabilities`
-  是内置模型的内部格式，配置层不认）。改完配置必须**完全重启 OpenCode** 才生效。
+  是内置模型的内部格式，配置层不认）。改完配置必须**完全重启 OpenCode** 才生效
+  （16:43 的失败测试早于 16:52 的配置修正，属旧会话未重载）。2026-08-25 用户重启后
+  重测通过，三层链路确认打通。

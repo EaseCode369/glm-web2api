@@ -363,7 +363,8 @@ all-tools error part 24485 行；todowrite tool_calls part 24399 行；moe_47/mo
      首个 image part、丢弃重复 text part。
 - **验证**：`uv run --with pytest python -m pytest tests/ -q` → **86 passed**
   （新增 5 个 vision 测试）；端到端 curl（base64 data URL → 代理 → 上游）模型正确
-  描述"三支并排铅笔、黑色笔杆橙色笔尖"。
+  描述"三支并排铅笔、黑色笔杆橙色笔尖"。2026-08-25 用户在 OpenCode 内重测通过：
+  发截图问铅笔数量，模型正确作答，vision 链路三层闸门全部打通。
 - **备份**：`glm2api/src/glm2api/services/glm_client.py.bak-20260825-vision`。
 - **遗留**：PDF 输入未验证（file part 格式仍为旧 source_id 结构，如有需求另行实验）；
   多张图片已支持（每张一个 part，文本只并入第一张）。

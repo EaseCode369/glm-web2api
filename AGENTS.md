@@ -11,7 +11,7 @@
 - 当前凭据模式：**真实账号**（`glm2api/token.txt` 1 个 refresh_token，自动轮换写回；游客模式仅作兜底）；token 再提取方法见 PROJECT.md §5.4
 - 下游已接入：Codex（`~/.codex/config.toml` 的 `[model_providers.glmweb]`，cc-switch 切换）、
   OpenCode（`~/.config/opencode/opencode.jsonc` 的 `glmweb` provider；模型条目已声明
-  `capabilities.input.image`，图片可用，见 PROJECT.md §12）
+  `modalities` image 输入，图片可用（2026-08-25 用户重测通过），见 PROJECT.md §12）
 - 2026-08-25 已加固 `glm2api/src/glm2api/utils/tool_parser.py`（CDATA 数组 / 双重编码 JSON /
   幻觉闭合标签三类恢复；原版备份 `tool_parser.py.bak-20260825`），OpenCode `question` 工具
   往返已打通，详见 PROJECT.md §6
